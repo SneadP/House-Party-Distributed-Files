@@ -1,0 +1,27 @@
+# Sample commands:
+# ansible nodes -i ansible-hosts --private-key id_rsa -u root -m ping
+# ansible nodes -i ansible-hosts --private-key id_rsa -u root -m shell -a "uptime"
+
+[nodes]
+  slice319.pcvm3-1.geni.case.edu ansible_ssh_host=pcvm3-1.geni.case.edu ansible_ssh_port=49174
+    slice319.pcvm1-1.geni.it.cornell.edu ansible_ssh_host=pcvm1-1.geni.it.cornell.edu ansible_ssh_port=49172
+    slice319.pcvm3-1.instageni.metrodatacenter.com ansible_ssh_host=pcvm3-1.instageni.metrodatacenter.com ansible_ssh_port=49173
+    slice319.pcvm2-2.instageni.rnoc.gatech.edu ansible_ssh_host=pcvm2-2.instageni.rnoc.gatech.edu ansible_ssh_port=49173
+    slice319.pcvm3-2.instageni.illinois.edu ansible_ssh_host=pcvm3-2.instageni.illinois.edu ansible_ssh_port=49173
+    slice319.pcvm5-7.lan.sdn.uky.edu ansible_ssh_host=pcvm5-7.lan.sdn.uky.edu ansible_ssh_port=49173
+    slice319.pcvm3-1.instageni.lsu.edu ansible_ssh_host=pcvm3-1.instageni.lsu.edu ansible_ssh_port=49173
+    slice319.pcvm2-2.instageni.maxgigapop.net ansible_ssh_host=pcvm2-2.instageni.maxgigapop.net ansible_ssh_port=49173
+    slice319.pcvm1-1.instageni.iu.edu ansible_ssh_host=pcvm1-1.instageni.iu.edu ansible_ssh_port=49173
+    slice319.pcvm3-4.instageni.rnet.missouri.edu ansible_ssh_host=pcvm3-4.instageni.rnet.missouri.edu ansible_ssh_port=49173
+    slice319.pcvm3-7.instageni.nps.edu ansible_ssh_host=pcvm3-7.instageni.nps.edu ansible_ssh_port=49176
+    slice319.pcvm2-1.instageni.nysernet.org ansible_ssh_host=pcvm2-1.instageni.nysernet.org ansible_ssh_port=49173
+    slice319.pcvm3-11.genirack.nyu.edu ansible_ssh_host=pcvm3-11.genirack.nyu.edu ansible_ssh_port=49173
+    slice319.pcvm5-1.instageni.northwestern.edu ansible_ssh_host=pcvm5-1.instageni.northwestern.edu ansible_ssh_port=49174
+    slice319.pcvm5-2.instageni.cs.princeton.edu ansible_ssh_host=pcvm5-2.instageni.cs.princeton.edu ansible_ssh_port=49173
+    slice319.pcvm3-3.instageni.rutgers.edu ansible_ssh_host=pcvm3-3.instageni.rutgers.edu ansible_ssh_port=49173
+    slice319.pcvm1-6.instageni.sox.net ansible_ssh_host=pcvm1-6.instageni.sox.net ansible_ssh_port=49173
+    slice319.pcvm3-1.instageni.stanford.edu ansible_ssh_host=pcvm3-1.instageni.stanford.edu ansible_ssh_port=49173
+    slice319.pcvm2-1.instageni.idre.ucla.edu ansible_ssh_host=pcvm2-1.instageni.idre.ucla.edu ansible_ssh_port=49173
+    slice319.pcvm4-1.utahddc.geniracks.net ansible_ssh_host=pcvm4-1.utahddc.geniracks.net ansible_ssh_port=49173
+    slice319.pcvm1-1.instageni.wisc.edu ansible_ssh_host=pcvm1-1.instageni.wisc.edu ansible_ssh_port=49173
+  
