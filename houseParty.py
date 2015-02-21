@@ -5,9 +5,12 @@ from select import select
 import sys
 from random import *
 import threading
+from time import time
 
 PORT = 12345
 BUF_SIZE = 1024
+
+socketLock = threading.Semaphore()
 
 class fileHeader:
 	def __init__(self,name):
@@ -50,6 +53,18 @@ class hashTable:
 			return self.table[val % 256]
 		else:
 			return self.table[val.randID % 256]
+
+class replyRecord:
+	def __init__(self,val):
+		self.val = val
+		self.time = time()
+
+	def __cmp__(self,other):
+		a = time() - self.time
+		b = time() - other.time
+		if a < b: return -1
+		if a == b: return 0
+		if a > b: return 1
 	
 class guest:
 	def __init__(self, neighbor, fileList):
@@ -66,14 +81,15 @@ class guest:
 		self.randID = -1
 
 		self.threads = {}
-		self.socketLock = threading.Semaphore()
+		self.lastReply = []
+		#self.socketLock = threading.Semaphore()
 
 		if (neighbor is not None):
 			print 'Sending knock to ' + neighbor
 			message = ('knock',None)
 			pickMessage = dumps(message)
 
-			with self.socketLock:
+			with socketLock:
 				self.sock.sendto(pickMessage,(neighbor,PORT))
 				pickReply = self.sock.recvfrom(BUF_SIZE)
 			
@@ -83,16 +99,18 @@ class guest:
 				self.guestList = reply[1]
 				for i in self.guestList:
 					self.hashList.insert(i)
+					self.lastReply.append(replyRecord(i))
 
 				while (self.randID < -1 or self.randID%256 in [x.randID%256 for x in self.guestList]):
 					self.randID = randint(0,sys.maxint)
 
-				myHash = hashEntry(self.addr, self.randID, 1)
+				myHash = hashEntry(self.addr, self.randID, 0)
 
 				self.addMe(myHash)
 
 				self.guestList.append(myHash)
 				self.hashList.insert(myHash)
+				self.lastReply.append(replyRecord(myHash))
 			else:
 				sys.exit(-1)
 
@@ -101,11 +119,13 @@ class guest:
 			myHash = hashEntry(self.addr, self.randID, 0)
 			self.guestList.append(myHash)
 			self.hashList.insert(myHash)
+			self.lastReply.append(replyRecord(myHash))
 
 	def run(self):
 		while(1):
-			if(select([self.sock],[],[],0)):
-				with self.socketLock:
+			sockStatus = select([self.sock],[],[],0)
+			if(sockStatus[0]):
+				with socketLock:
 					pickMessage = self.sock.recvfrom(BUF_SIZE)
 
 				message = loads(pickMessage[0])
@@ -114,24 +134,49 @@ class guest:
 					reply = ('guestList',self.guestList)
 					pickReply = dumps(reply)
 
-					with self.socketLock:
+					with socketLock:
 						self.sock.sendto(pickReply,pickMessage[1])
 
 				if (message[0] == 'addMe'):
-					threadName = 'addGuest'+pickMessage[1][0]
+					print 'addMe from '+ pickMessage[1][0]
+					threadName = 'addGuest_'+pickMessage[1][0]
 					
 					self.threads[threadName] = [threading.Thread(None,self.addGuest,threadName,(message,pickMessage[1][0])),[]]
 					self.threads[threadName][0].start()
 
 				if (message[0] == 'confirmAdd'):
 					print 'confirmAdd from '+pickMessage[1][0]
-					threadName = 'addGuest'+message[1][0]
+					threadName = 'addGuest_'+message[1][0]
 					if (threadName in self.threads):
 						self.threads[threadName][1].append(pickMessage)
 					else:
-						with self.socketLock:
-							message[1][1] = 'no'
-							self.sock.sendto(dumps(message),pickMessage[1])
+						if (message[1][1] == 'yes'):
+							with socketLock:
+								message[1][1] = 'no'
+								self.sock.sendto(dumps(message),pickMessage[1])
+
+				if (message[0] == 'hello'):
+					print pickMessage[1][0]+ ' said hello'
+					threadName = 'hello_'+message[1]
+
+					if (threadName in self.threads):
+						self.threads[threadName][1].append(message)
+					else:
+						with socketLock:
+							self.sock.sendto(pickMessage[0],pickMessage[1])
+
+			elif (time() - max(self.lastReply).time > 10):
+				tar = max(self.lastReply)
+				i = self.lastReply.index(tar)
+				if (tar.val.addr == self.addr):
+					self.lastReply[i].time = time()
+				else:
+
+					threadName = 'hello_'+tar.val.addr
+					if (threadName not in self.threads):
+						self.threads[threadName] = [threading.Thread(None,self.hello,threadName,[tar]),[]]
+						self.threads[threadName][0].start()
+				
 
 
 	def holdMyPint(self):
@@ -149,15 +194,16 @@ class guest:
 		pickMessage = dumps(message)
 
 		for i in self.guestList:
-			with self.socketLock:
-				self.sock.sendto(pickMessage,(i.addr,PORT))
-			print 'Sent addMe to '+i.addr
+			if (i.status == 0):
+				with socketLock:
+					self.sock.sendto(pickMessage,(i.addr,PORT))
+				print 'Sent addMe to '+i.addr
 
-			approval.append(i.addr)
+				approval.append(i.addr)
 
 		while (approval):
 			
-			with self.socketLock:
+			with socketLock:
 				pickReply = self.sock.recvfrom(BUF_SIZE)
 
 			reply = loads(pickReply[0])
@@ -176,8 +222,9 @@ class guest:
 		pickMessage = dumps(message)
 		
 		for i in self.guestList:
-			if (i.addr != self.addr):
-				self.sock.sendto(pickMessage,(i.addr,PORT))
+			if (i.addr != self.addr and i.status == 0):
+				with socketLock:
+					self.sock.sendto(pickMessage,(i.addr,PORT))
 					
 				print 'Confirming addition of ' + addr+ ' with '+i.addr
 
@@ -190,17 +237,41 @@ class guest:
 				reply = loads(pickReply[0])
 				if (reply[1][1] == 'yes' and pickReply[1][0] in approval):
 					approval.remove(pickReply[1][0])
-					#with self.socketLock:
-					self.sock.sendto(pickReply[0],pickReply[1])
+					with socketLock:
+						self.sock.sendto(pickReply[0],pickReply[1])
 				
-
-		#with self.socketLock:
-		self.sock.sendto(pickMessage,(addr,PORT))
+		with socketLock:
+			self.sock.sendto(pickMessage,(addr,PORT))
 
 		print addr+' is approved'
 
 		self.guestList.append(inMessage[1])
 		self.hashList.insert(inMessage[1])
+
+		self.threads.pop(threadName,None)
+
+	def hello(self, target):
+		threadName = threading.current_thread().getName()
+
+		message = ('hello',target.val.addr)
+		pickMessage = dumps(message)
+		self.sock.sendto(pickMessage,(target.val.addr,PORT))
+
+		delay = time()
+
+		while (time() - delay < 5):
+			q = self.threads[threadName][1]
+			if (len(q) > 0):
+				q.pop(0)
+				self.lastReply.remove(target)
+				target.time = time()
+				self.lastReply.append(target)
+				self.threads.pop(threadName,None)
+				return True
+
+		return False
+				
+
 
 
 def main(argv = None):
