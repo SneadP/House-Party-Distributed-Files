@@ -26,11 +26,6 @@ env.key_filename="./id_rsa"
 env.use_ssh_config = True
 env.ssh_config_path = './ssh-config'
 
-env.roledefs['server'] = ["slice319.pcvm3-1.geni.case.edu"]
-env.roledefs['client'] = [ "slice319.pcvm3-1.instageni.metrodatacenter.com",
-    "slice319.pcvm2-2.instageni.rnoc.gatech.edu",
-    "slice319.pcvm3-2.instageni.illinois.edu",]
-
 def pingtest():
 	run('ping -c 3 10.0.0.244')
 
@@ -40,15 +35,25 @@ def uptime():
 def ifconfig():
 	run('ifconfig')
 
+@hosts("slice319.pcvm3-1.geni.case.edu")
+def demoA():
+	run('python houseParty.py None')
+
+@hosts("slice319.pcvm3-1.instageni.metrodatacenter.com")
+def demoB():
+	run('python houseParty.py 10.0.0.244')
+
+@hosts("slice319.pcvm2-2.instageni.rnoc.gatech.edu")
+def demoC():
+	run('python houseParty.py 10.2.0.245')
+
+@hosts("slice319.pcvm3-2.instageni.illinois.edu")
+def demoD():
+	run('python houseParty.py 10.0.0.244')
+
 @parallel
 def update():
-	put('testServ.py','testServ.py')
-	put('testClient.py','testClient.py')
+	put('houseParty.py','houseParty.py')
 
-@roles('server')
-def runserver():
-	run ('python testServ.py')
-
-@roles('client')
-def runclients():
-	run('python testClient.py')
+def clean():
+	run('rm *')
