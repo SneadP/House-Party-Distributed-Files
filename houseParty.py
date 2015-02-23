@@ -12,20 +12,26 @@ BUF_SIZE = 1024
 
 #File class. Currently just headers, designed for future expansion
 class fileHeader:
-	def __init__(self,name,hashVal = None, isSlice = False):
+	def __init__(self,name,hashVal = None, isSlice = None):
 		self.name = name
 		if hashVal == None:
 			self.hashVal = sum([ord(x) for x in self.name])
 		else:
 			self.hashVal = hashVal
 		self.isSlice = isSlice
+		self.lastWatch = None
 
 	def split(self):
 		retVal = []
-		retVal.append(fileHeader(self.name + "_A",self.hashVal,True))
-		retVal.append(fileHeader(self.name + "_B",self.hashVal,True))
-		retVal.append(fileHeader(self.name + "_C",self.hashVal,True))
+		retVal.append(fileHeader(self.name,self.hashVal,'A'))
+		retVal.append(fileHeader(self.name,self.hashVal,'B'))
+		retVal.append(fileHeader(self.name,self.hashVal,'C'))
 		return retVal
+
+class fileLocation:
+	def __init__(self,f,locations = []):
+		self.f = f
+		self.locations = locations
 
 #Entry for a guest list
 class hashEntry:
@@ -58,7 +64,10 @@ class hashTable:
 	def search(self,val):
 		if (type(val) is int):
 			entries = self.table[:val%256]
-			entries = [x for x in entries and x is not None]
+			entries = [x for x in entries if x is not None]
+			if not entries:
+				entries = self.table[val%256:]
+				entries = [x for x in entries if x is not None]
 			return entries[-1]
 		else:
 			return self.table[val.randID % 256]
@@ -70,7 +79,8 @@ class guest:
 		self.sock.bind(('',PORT))
 
 		self.addr = gethostbyname(gethostname())
-		myFiles = [fileHeader(x) for x in fileList]
+		self.fileList = [fileHeader(x) for x in fileList]
+		self.fileLocations = []
 		print 'My address is '+self.addr
 
 		self.guestList = []
@@ -79,6 +89,8 @@ class guest:
 
 		self.threads = {}
 		self.socketLock = threading.Semaphore()
+
+		self.redist = False
 
 		if (neighbor is not None):
 			print 'Sending knock to ' + neighbor
@@ -90,25 +102,21 @@ class guest:
 				pickReply = self.sock.recvfrom(BUF_SIZE)
 			
 			reply = loads(pickReply[0])
-			if (reply[0] == 'guestList'):
+			if reply[0] == 'guestList':
 				print 'Acquired guestList from ' + pickReply[1][0]
 				self.guestList = reply[1]
 				for i in self.guestList:
 					i.time = time()
 					self.hashList.insert(i)
 
-				while (self.randID < -1 or self.randID%256 in [x.randID%256 for x in self.guestList]):
+				while self.randID < -1 or self.randID%256 in [x.randID%256 for x in self.guestList]:
 					self.randID = randint(0,sys.maxint)
 
 				myHash = hashEntry(self.addr, self.randID, 0)
 
-				self.addMe(myHash)
-
-				self.guestList.append(myHash)
-				self.hashList.insert(myHash)
-
-			else:
-				sys.exit(-1)
+				threadName = 'addMe'
+				self.threads[threadName] = [threading.Thread(None,self.addMe,threadName,[myHash]),[]]
+				self.threads[threadName][0].start()
 
 		else:
 			self.randID = randint(0,sys.maxint)
@@ -118,6 +126,12 @@ class guest:
 
 	def run(self):
 		while(1):
+			if self.redist:
+				threadName = 'redist'
+				self.threads[threadName] = [threading.Thread(None,self.distributeFiles,threadName),[]]
+				self.threads[threadName][0].start()
+				self.redist = False
+			
 			#If there's a message, get it
 			sockStatus = select([self.sock],[],[],0)
 			if(sockStatus[0]):
@@ -145,8 +159,13 @@ class guest:
 					self.threads[threadName] = [threading.Thread(None,self.addGuest,threadName,(message,pickMessage[1][0])),[]]
 					self.threads[threadName][0].start()
 
+
 				if (message[0] == 'confirmAdd'):
 					print 'confirmAdd from '+pickMessage[1][0]
+					if 'addMe' in self.threads:
+						self.threads['addMe'][1].append(pickMessage)
+						continue
+
 					threadName = 'addGuest_'+message[1][0]
 					if (threadName in self.threads):
 						self.threads[threadName][1].append(pickMessage)
@@ -177,7 +196,21 @@ class guest:
 						self.threads[threadName] = [threading.Thread(None,self.hello,threadName,[message[1]]),[]]
 						self.threads[threadName][0].start()
 
-			else:	
+				if (message[0] == 'holdMyPint'):
+					print 'Holding '+message[1].name
+					self.fileList.append(message[1])
+					self.watchMyPint(message[1])
+
+				if message[0] == 'watchMyPint':
+					print 'Watching '+message[1].name+' for '+pickMessage[1][0]
+					entry = [x for x in self.fileLocations if x.f == message[1]]
+					if entry:
+						entry[0].locations.append(pickMessage[1][0])
+					else:
+						self.fileLocations.append(fileLocation(message[1], pickMessage[1][0]))
+
+			else:
+
 				tarList = [x for x in self.guestList if (time()-x.time > 10 or time() - x.time < 0) and x.status == 0] #FIXME
 				for tar in tarList:
 					if (tar.addr == self.addr):
@@ -196,16 +229,30 @@ class guest:
 						self.threads[threadName][0].start()
 				
 
-	def holdMyPint(self):
-		pass
+	def holdMyPint(self, f, addr):
+		message = ('holdMyPint',f)
+		pickMessage = dumps(message)
+		with self.socketLock:
+			self.sock.sendto(pickMessage,(addr,PORT))
 
-	def watchMyPint(self):
-		pass
+		print addr+' will hold '+f.name
+
+	def watchMyPint(self, f):
+		target = self.hashList.search(f.hashVal)
+		message = ('watchMyPint', f)
+		pickMessage = dumps(message)
+		with self.socketLock:
+			self.sock.sendto(pickMessage,(target.addr,PORT))
+		f.lastWatch = target.addr
+
+		print target.addr+' will watch '+f.name
+		
 
 	def wheresMyPint(self):
 		pass
 
 	def addMe(self,profile):
+		threadName = threading.current_thread().getName()
 		approval = []
 		message = ('addMe',profile)
 		pickMessage = dumps(message)
@@ -219,16 +266,24 @@ class guest:
 				approval.append(i.addr)
 
 		while (approval):
-			
-			with self.socketLock:
-				pickReply = self.sock.recvfrom(BUF_SIZE)
+			q = self.threads[threadName][1]
+			if q:
+				pickReply = q.pop()
 
-			reply = loads(pickReply[0])
-			if (reply[0] == 'confirmAdd' and reply[1][0] == self.addr):
-				approval.remove(pickReply[1][0])
-				print 'Recieved approval from ' + pickReply[1][0]
+				reply = loads(pickReply[0])
+				if (reply[0] == 'confirmAdd' and reply[1][0] == self.addr):
+					approval.remove(pickReply[1][0])
+					print 'Recieved approval from ' + pickReply[1][0]
 
 		print 'Entry is approved! Joining party.'
+
+		self.guestList.append(profile)
+		self.hashList.insert(profile)
+
+		if len(self.guestList) >= 3:
+			self.redist = True
+
+		self.threads.pop(threadName,None)
 
 
 	def addGuest(self,inMessage,addr):
@@ -267,7 +322,7 @@ class guest:
 		self.hashList.insert(inMessage[1])
 
 		if (len(self.guestList) >= 3):
-			self.distributeFiles()
+			self.redist = True
 
 		self.threads.pop(threadName,None)
 
@@ -284,7 +339,7 @@ class guest:
 
 		while (time() - delay < 5):
 			q = self.threads[threadName][1]
-			if (len(q) > 0):
+			if q:
 				q.pop(0)
 				self.updateLastReply(target)
 
@@ -354,7 +409,28 @@ class guest:
 			tar.status = 0
 
 	def distributeFiles(self):
-		partialFiles = [x for x in self.fileList if x.name
+		completeFiles = [x for x in self.fileList if not x.isSlice]
+		partialFiles = [x for x in self.fileList if x.isSlice]
+		
+		for f in completeFiles:
+			fSplit = f.split()
+			self.fileList.remove(f)
+			self.fileList.append(fSplit[0])
+
+			neighbors = [x.addr for x in self.guestList if x.addr != self.addr]
+
+			addrA = choice(neighbors)
+			neighbors.remove(addrA)
+			addrB = choice(neighbors)
+
+			self.watchMyPint(fSplit[0])
+			self.holdMyPint(fSplit[1],addrA)
+			self.holdMyPint(fSplit[2],addrB)
+
+		for f in partialFiles:
+			if f.lastWatch != self.hashList.search(f.hashVal):
+				self.watchMyPint(f)
+
 
 		
 def main(argv = None):

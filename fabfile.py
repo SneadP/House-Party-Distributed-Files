@@ -37,15 +37,15 @@ def ifconfig():
 
 @hosts("slice319.pcvm3-1.geni.case.edu")
 def demoA():
-	run('python houseParty.py None')
+	run('python houseParty.py None Herminator.rtf Guinness.pdf')
 
 @hosts("slice319.pcvm3-1.instageni.metrodatacenter.com")
 def demoB():
-	run('python houseParty.py 10.0.0.244')
+	run('python houseParty.py 10.0.0.244 Winter_Ale.xlsx Dark_Matter.mp3 Blue_Buck.txt')
 
 @hosts("slice319.pcvm2-2.instageni.rnoc.gatech.edu")
 def demoC():
-	run('python houseParty.py 10.2.0.245')
+	run('python houseParty.py 10.2.0.245 Molsen.gif')
 
 @hosts("slice319.pcvm3-2.instageni.illinois.edu")
 def demoD():
