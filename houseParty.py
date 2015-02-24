@@ -248,8 +248,49 @@ class guest:
 		print target.addr+' will watch '+f.name
 		
 
-	def wheresMyPint(self):
-		pass
+	def wheresMyPint(self, name):
+		threadName = threading.current_thread().getName()
+		hashVal = sum([ord(x) for x in name])
+
+		target = self.hashList.searh(hashVal)
+
+		locations = []
+		pints = []
+
+		message = ('wheresMyPint',name)
+		pickMessage = dumps(message)
+
+		with self.socketLock:
+			self.sock.sendto(pickMessage,(target.addr,PORT))
+
+		while not locations:
+			q = self.threads[threadName][1]
+			if q:
+				pickReply = q.pop()
+				reply = loads(pickReply[0])
+				
+				locations = reply[1].locations
+
+		message = ('passMyPint',name)
+		pickMessage = dumps(message)
+		for i in locations:
+			if i == self.addr:
+				entry = [x for x in self.fileList if x.name = name]
+				pints.extend(entry)
+			else:
+				with self.socketLock:
+					seld.sock.sendto(pickMessage,(i,PORT))
+
+		while len(pints) < 2:
+			q = self.threads[threadName][1]
+			if q:
+				pickReply = q.pop()
+				reply = loads(pickReply[0])
+				
+				pints.append(reply[1])
+
+		
+		
 
 	def addMe(self,profile):
 		threadName = threading.current_thread().getName()

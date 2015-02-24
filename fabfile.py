@@ -36,20 +36,36 @@ def ifconfig():
 	run('ifconfig')
 
 @hosts("slice319.pcvm3-1.geni.case.edu")
-def demoA():
+def demo1A():
+        run('python houseParty.py None')
+
+@hosts("slice319.pcvm3-1.instageni.metrodatacenter.com")
+def demo1B():
+        run('python houseParty.py 10.0.0.244')
+
+@hosts("slice319.pcvm2-2.instageni.rnoc.gatech.edu")
+def demo1C():
+        run('python houseParty.py 10.2.0.245')
+
+@hosts("slice319.pcvm3-2.instageni.illinois.edu")
+def demo1D():
+        run('python houseParty.py 10.0.0.244')
+
+@hosts("slice319.pcvm3-1.geni.case.edu")
+def demo2A():
 	run('python houseParty.py None Herminator.rtf Guinness.pdf')
 
 @hosts("slice319.pcvm3-1.instageni.metrodatacenter.com")
-def demoB():
+def demo2B():
 	run('python houseParty.py 10.0.0.244 Winter_Ale.xlsx Dark_Matter.mp3 Blue_Buck.txt')
 
 @hosts("slice319.pcvm2-2.instageni.rnoc.gatech.edu")
-def demoC():
+def demo2C():
 	run('python houseParty.py 10.2.0.245 Molsen.gif')
 
 @hosts("slice319.pcvm3-2.instageni.illinois.edu")
-def demoD():
-	run('python houseParty.py 10.0.0.244')
+def demo2D():
+	run('python houseParty.py 10.0.0.244 Alexander_Keiths.png Heineken.docx')
 
 @parallel
 def update():
