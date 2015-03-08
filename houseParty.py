@@ -176,7 +176,6 @@ class guest:
 								self.sock.sendto(dumps(message),pickMessage[1])
 
 				if (message[0] == 'hello'):
-					print pickMessage[1][0]+ ' said hello'
 					threadName = 'hello_'+message[1]
 
 					if (threadName in self.threads):
@@ -208,7 +207,16 @@ class guest:
 						entry[0].locations.append(pickMessage[1][0])
 					else:
 						self.fileLocations.append(fileLocation(message[1], pickMessage[1][0]))
-
+				if messasge[0] == 'wheresMyPint':
+					entry = [x for x in self.fileList if x.name == message[1]]
+					entry.extend([x for x in self.fileLocations if x.f == message[1]])
+					if entry:
+						messasge = ('heresYourPint', entry[0])
+					else:
+						message = ('heresYourPint', self.hashList.search(message[1]))
+					pickMessage[0] = dumps(message)
+					with self.socketLock:
+						self.sock.sendto(pickMessage[0],pickMessage[1])
 			else:
 
 				tarList = [x for x in self.guestList if (time()-x.time > 10 or time() - x.time < 0) and x.status == 0] #FIXME
@@ -263,34 +271,21 @@ class guest:
 		with self.socketLock:
 			self.sock.sendto(pickMessage,(target.addr,PORT))
 
-		while not locations:
-			q = self.threads[threadName][1]
-			if q:
-				pickReply = q.pop()
-				reply = loads(pickReply[0])
-				
-				locations = reply[1].locations
-
-		message = ('passMyPint',name)
-		pickMessage = dumps(message)
-		for i in locations:
-			if i == self.addr:
-				entry = [x for x in self.fileList if x.name = name]
-				pints.extend(entry)
-			else:
-				with self.socketLock:
-					seld.sock.sendto(pickMessage,(i,PORT))
-
 		while len(pints) < 2:
 			q = self.threads[threadName][1]
 			if q:
 				pickReply = q.pop()
 				reply = loads(pickReply[0])
-				
-				pints.append(reply[1])
 
-		
-		
+				if type(reply[1]) == fileHeader:
+					pints.append(reply[1])
+				else:
+					locations.extend(reply[1])
+			for i in locations:
+				with self.socketLock:
+					self.sock.sendto(pickMessage,(i,PORT))
+			locations = []
+
 
 	def addMe(self,profile):
 		threadName = threading.current_thread().getName()
@@ -368,7 +363,6 @@ class guest:
 		self.threads.pop(threadName,None)
 
 	def hello(self, target):
-		print 'Saying hello to '+target
 		threadName = threading.current_thread().getName()
 
 		message = ('hello',target)
@@ -409,8 +403,6 @@ class guest:
 		
 
 		approval = [x.addr for x in self.guestList if x.addr!= self.addr and x.addr != target]
-
-		print approval
 
 		message = ('call',target)
 		pickMessage = dumps(message)
@@ -473,7 +465,6 @@ class guest:
 				self.watchMyPint(f)
 
 
-		
 def main(argv = None):
 	if (argv is None):
 		argv = sys.argv
