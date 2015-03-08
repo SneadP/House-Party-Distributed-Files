@@ -207,7 +207,7 @@ class guest:
 						entry[0].locations.append(pickMessage[1][0])
 					else:
 						self.fileLocations.append(fileLocation(message[1], pickMessage[1][0]))
-				if messasge[0] == 'wheresMyPint':
+				if message[0] == 'wheresMyPint':
 					entry = [x for x in self.fileList if x.name == message[1]]
 					entry.extend([x for x in self.fileLocations if x.f == message[1]])
 					if entry:
