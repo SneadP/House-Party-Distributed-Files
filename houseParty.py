@@ -29,9 +29,9 @@ class fileHeader:
 		return retVal
 
 class fileLocation:
-	def __init__(self,f,locations = []):
-		self.f = f
-		self.locations = locations
+	def __init__(self,name,locations = []):
+		self.name = name
+		self.locations = [locations]
 
 #Entry for a guest list
 class hashEntry:
@@ -59,6 +59,7 @@ class hashTable:
 		else:
 			i = val.randID % 256
 			self.table[i] = None
+
 		self.count -=1
 
 	def search(self,val):
@@ -126,12 +127,6 @@ class guest:
 
 	def run(self):
 		while(1):
-			if self.redist:
-				threadName = 'redist'
-				self.threads[threadName] = [threading.Thread(None,self.distributeFiles,threadName),[]]
-				self.threads[threadName][0].start()
-				self.redist = False
-			
 			#If there's a message, get it
 			sockStatus = select([self.sock],[],[],0)
 			if(sockStatus[0]):
@@ -139,11 +134,14 @@ class guest:
 					pickMessage = self.sock.recvfrom(BUF_SIZE)
 
 				message = loads(pickMessage[0])
+				#print message
 
 				# update the last reply time for sender
 				self.updateLastReply(pickMessage[1][0])
 
 				#Handle messages by type
+
+				#Knock sends back the guest list
 				if (message[0] == 'knock'):
 					print 'knock from ' + pickMessage[1][0]
 					reply = ('guestList',self.guestList)
@@ -152,6 +150,7 @@ class guest:
 					with self.socketLock:
 						self.sock.sendto(pickReply,pickMessage[1])
 
+				#addMe initiates an add request
 				if (message[0] == 'addMe'):
 					print 'addMe from '+ pickMessage[1][0]
 					threadName = 'addGuest_'+pickMessage[1][0]
@@ -160,8 +159,8 @@ class guest:
 					self.threads[threadName][0].start()
 
 
+				#confirmAdd approves people to be added
 				if (message[0] == 'confirmAdd'):
-					print 'confirmAdd from '+pickMessage[1][0]
 					if 'addMe' in self.threads:
 						self.threads['addMe'][1].append(pickMessage)
 						continue
@@ -175,16 +174,17 @@ class guest:
 								message[1][1] = 'no'
 								self.sock.sendto(dumps(message),pickMessage[1])
 
+				#hello-hello pings w/ timeout
 				if (message[0] == 'hello'):
 					threadName = 'hello_'+message[1]
 
-					if (threadName in self.threads):
+					if threadName in self.threads:
 						self.threads[threadName][1].append(message)
-					else:
+					elif message[1] == self.addr:
 						with self.socketLock:
 							self.sock.sendto(pickMessage[0],pickMessage[1])
 
-
+				#Have everyone check if someone is still alive
 				if (message[0] == 'call'):
 					threadName = 'call_'+message[1]
 					if threadName in self.threads:
@@ -195,33 +195,44 @@ class guest:
 						self.threads[threadName] = [threading.Thread(None,self.hello,threadName,[message[1]]),[]]
 						self.threads[threadName][0].start()
 
+				#Add a fileHeader to the file list
 				if (message[0] == 'holdMyPint'):
-					print 'Holding '+message[1].name
 					self.fileList.append(message[1])
 					self.watchMyPint(message[1])
 
+				
 				if message[0] == 'watchMyPint':
-					print 'Watching '+message[1].name+' for '+pickMessage[1][0]
-					entry = [x for x in self.fileLocations if x.f == message[1]]
+					entry = [x for x in self.fileLocations if x.name == message[1].name]
 					if entry:
 						entry[0].locations.append(pickMessage[1][0])
 					else:
-						self.fileLocations.append(fileLocation(message[1], pickMessage[1][0]))
+						self.fileLocations.append(fileLocation(message[1].name, pickMessage[1][0]))
 				if message[0] == 'wheresMyPint':
 					entry = [x for x in self.fileList if x.name == message[1]]
-					entry.extend([x for x in self.fileLocations if x.f == message[1]])
+					entry.append([x for x in self.fileLocations if x.name == message[1]])
 					if entry:
-						messasge = ('heresYourPint', entry[0])
+						reply = ('heresYourPint', [message[1],entry[0]])
 					else:
-						message = ('heresYourPint', self.hashList.search(message[1]))
-					pickMessage[0] = dumps(message)
+						reply = ('heresYourPint', [message[1],self.hashList.search(message[1])])
+					pickReply = dumps(reply)
 					with self.socketLock:
-						self.sock.sendto(pickMessage[0],pickMessage[1])
+						self.sock.sendto(pickReply,pickMessage[1])
+				if message[0] == 'heresYourPint':
+					threadName = 'wheresMyPint_' + message[1][0]
+					if threadName in self.threads:
+						self.threads[threadName][1] = message
 			else:
 
-				tarList = [x for x in self.guestList if (time()-x.time > 10 or time() - x.time < 0) and x.status == 0] #FIXME
+				tarList = [x for x in self.guestList if (time()-x.time > 8 or time() - x.time < -1) and x.status == 0] #FIXME
 				for tar in tarList:
 					if (tar.addr == self.addr):
+						print 'File Status:'
+						print 'Now Holding:'
+						for i in self.fileList:
+							print i.name
+						print 'Now Watching:'
+						for i in self.fileLocations:
+							print i.name + ' at '+ str(i.locations)
 						tar.time = time()
 					else:
 						threadName = 'hello_'+tar.addr
@@ -235,6 +246,12 @@ class guest:
 					if (threadName not in self.threads):
 						self.threads[threadName] = [threading.Thread(None,self.call,threadName,[call.addr]),[]]
 						self.threads[threadName][0].start()
+
+				if self.redist:
+					threadName = 'redist'
+					self.threads[threadName] = [threading.Thread(None,self.distributeFiles,threadName),[]]
+					self.threads[threadName][0].start()
+					self.redist = False
 				
 
 	def holdMyPint(self, f, addr):
@@ -243,24 +260,28 @@ class guest:
 		with self.socketLock:
 			self.sock.sendto(pickMessage,(addr,PORT))
 
-		print addr+' will hold '+f.name
 
 	def watchMyPint(self, f):
 		target = self.hashList.search(f.hashVal)
+		f.lastWatch = target.addr
+		if target.addr == self.addr:
+			entry = [x for x in self.fileLocations if x.name == f.name]
+			if entry:
+				entry[0].locations.append(self.addr)
+			else:
+				self.fileLocations.append(fileLocation(f.name, self.addr))
+			target = self.hashList.search(self.randID-1)
+
 		message = ('watchMyPint', f)
 		pickMessage = dumps(message)
 		with self.socketLock:
 			self.sock.sendto(pickMessage,(target.addr,PORT))
-		f.lastWatch = target.addr
-
-		print target.addr+' will watch '+f.name
-		
 
 	def wheresMyPint(self, name):
 		threadName = threading.current_thread().getName()
 		hashVal = sum([ord(x) for x in name])
 
-		target = self.hashList.searh(hashVal)
+		target = self.hashList.search(hashVal)
 
 		locations = []
 		pints = []
@@ -274,17 +295,20 @@ class guest:
 		while len(pints) < 2:
 			q = self.threads[threadName][1]
 			if q:
-				pickReply = q.pop()
-				reply = loads(pickReply[0])
+				reply = q.pop()
 
-				if type(reply[1]) == fileHeader:
-					pints.append(reply[1])
+				if type(reply[1][1]) == fileHeader:
+					pints.append(reply[1][1])
 				else:
-					locations.extend(reply[1])
+					locations.extend(reply[1][1])
 			for i in locations:
 				with self.socketLock:
 					self.sock.sendto(pickMessage,(i,PORT))
 			locations = []
+		
+		self.fileList.append(fileHeader(name))
+
+		self.threads.pop(threadName,None)
 
 
 	def addMe(self,profile):
@@ -333,8 +357,6 @@ class guest:
 			if (i.addr != self.addr and i.status == 0):
 				with self.socketLock:
 					self.sock.sendto(pickMessage,(i.addr,PORT))
-					
-				print 'Confirming addition of ' + addr+ ' with '+i.addr
 
 				approval.append(i.addr)
 
@@ -372,7 +394,7 @@ class guest:
 
 		delay = time()
 
-		while (time() - delay < 5):
+		while (time() - delay < 4):
 			q = self.threads[threadName][1]
 			if q:
 				q.pop(0)
@@ -394,10 +416,12 @@ class guest:
 		
 
 	def call(self,target):
+		print 'Start a call to '+target
 		threadName = threading.current_thread().getName()
 
 		tarEntry = [x for x in self.guestList if x.addr == target]
 		if not tarEntry:
+			print 'HORROR!'
 			pass #FIXME
 		tarEntry = tarEntry[0]
 		
@@ -416,6 +440,7 @@ class guest:
 
 			if tarEntry.status == 0:
 				self.threads.pop(threadName,None)
+				print target+' replied. Ending call'
 				return
 
 			elif len(q) > 0:
@@ -430,6 +455,8 @@ class guest:
 		for i in kill:
 			self.guestList.remove(i)
 			self.hashList.delete(i)
+
+		self.redist = True
 		
 		self.threads.pop(threadName,None)
 		
@@ -440,10 +467,22 @@ class guest:
 		for tar in tarList:
 			tar.time = time()
 			tar.status = 0
+		if not tarList:
+			pass
+			#FIXME
+			#print 'horrible error'
 
 	def distributeFiles(self):
+		threadName = threading.current_thread().getName()
 		completeFiles = [x for x in self.fileList if not x.isSlice]
 		partialFiles = [x for x in self.fileList if x.isSlice]
+		brokenFiles = []
+		guestAddr = [x.addr for x in self.guestList]
+		for x in self.fileLocations:
+			for y in x.locations:
+				if y not in guestAddr:
+					brokenFiles.append(x)
+					break
 		
 		for f in completeFiles:
 			fSplit = f.split()
@@ -464,6 +503,17 @@ class guest:
 			if f.lastWatch != self.hashList.search(f.hashVal):
 				self.watchMyPint(f)
 
+		for f in brokenFiles:
+			print f.name + ' is broken. Attempting recovery'
+			threadName = 'wheresMyPint_'+f.name
+			self.threads[threadName] = [threading.Thread(None,self.wheresMyPint,threadName,[f.name]),[]]
+			self.threads[threadName][0].run()
+			self.threads[threadName][0].join()
+
+		print 'File distributuion complete.'
+		print 'Now holding: '+str([x.name for x in self.fileList])
+		print 'Now watching: ' +str([x.name for x in self.fileLocations])
+		self.threads.pop(threadName,None)
 
 def main(argv = None):
 	if (argv is None):
