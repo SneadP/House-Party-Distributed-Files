@@ -1,36 +1,181 @@
 from socket import *
 from pickle import *
-from socket import *
 from select import select
 import sys
+import os
+import math
 from random import *
 import threading
 from time import time
 
 PORT = 12345
 BUF_SIZE = 1024
+STORE_PATH = 'storedFiles/'
 
-#File class. Currently just headers, designed for future expansion
+#fileHeader: File class. Currently just headers, designed for future expansion
+
+#name: file name
+#size: size, in bytes, of the file or file slice.
+
+#hashVal: integer values used for peer hashing. Determines which peer
+#is responsible for knowing the file's location
+
+#isSlice: If None, this is a complete file, otherwise it is a fragment
+#Suppose a file is split into fragments 1, 2 and 3, each of which is a third of the file.
+#Slice A contains 1 and 2. 
+#Slice B contains 2 and 3.
+#Slice C contains 1 and 3.
+
+#lastWatch: ip address of the node watching this file. Used for determining if
+#the node responsible for knowing this file's location has died.
 class fileHeader:
-	def __init__(self,name,hashVal = None, isSlice = None):
-		self.name = name
-		if hashVal == None:
-			self.hashVal = sum([ord(x) for x in self.name])
-		else:
-			self.hashVal = hashVal
+	def __init__(self, name, isSlice = ''):
+		self.name = name.split('/')[-1]
+		self.path = name[0:-len(self.name)]
+
+		stat = os.stat(name+isSlice)
+		self.size = stat.st_size
+
+		self.hashVal = sum([ord(x) for x in self.name])
 		self.isSlice = isSlice
 		self.lastWatch = None
 
 	def split(self):
+		try:
+			f = open(self.path+self.name,'rb')
+		except:
+			return [] #FIXME
+
+		limA = int(math.ceil(self.size/3))
+		limB = int(math.ceil(self.size*2/3))
+
+		if not os.access(STORE_PATH,os.F_OK):
+			os.mkdir(STORE_PATH)
+
+		#FIXME replace with limited size buffer
+		#filename_A holds the first 2/3
+		fA = open(STORE_PATH + self.name+'_A','wb')
+		f.seek(0)
+		buf = f.read(limB)
+		fA.write(buf)
+		fA.close()
+
+		#filename_B holds the last 2/3
+		fB = open(STORE_PATH + self.name+'_B','wb')
+		f.seek(limA)
+		buf = f.read(self.size - limA)
+		fB.write(buf)
+		fB.close()
+
+		#filename_C holds the first 1/3 and the last 1/3
+		fC = open(STORE_PATH + self.name + '_C','wb')
+		f.seek(0)
+		buf = f.read(limA)
+		fC.write(buf)
+
+		f.seek(limB)
+		buf = f.read(self.size - limB)
+		fC.write(buf)
+		fC.close()
+
+		f.close()
+
+		#Create header objects
 		retVal = []
-		retVal.append(fileHeader(self.name,self.hashVal,'A'))
-		retVal.append(fileHeader(self.name,self.hashVal,'B'))
-		retVal.append(fileHeader(self.name,self.hashVal,'C'))
+		retVal.append(fileHeader(STORE_PATH + self.name, '_A'))
+		retVal.append(fileHeader(STORE_PATH + self.name, '_B'))
+		retVal.append(fileHeader(STORE_PATH + self.name, '_C'))
 		return retVal
 
+	def getFullPath(self):
+		return self.path+self.name+self.isSlice
+
+	def recoverSlice(self,other):
+		slices = ['_A','_B','_C']
+		slices.remove(self.isSlice)
+		slices.remove(other.isSlice)
+
+		sliceToRecover = slices[0]
+		recoverFile = open(STORE_PATH+self.name+sliceToRecover,'wb')
+
+		if sliceToRecover == '_A':
+			if self.isSlice == '_C':
+				recoverFile.write(self.getSliceSection(1))
+				recoverFile.write(other.getSliceSection(2))
+			else:
+				recoverFile.write(other.getSliceSection(1))
+				recoverFile.write(self.getSliceSection(2))
+
+		if sliceToRecover == '_B':
+			if self.isSlice == '_A':
+				recoverFile.write(self.getSliceSection(2))
+				recoverFile.write(other.getSliceSection(2))
+
+			else:
+				recoverFile.write(other.getSliceSection(2))
+				recoverFile.write(self.getSliceSection(2))
+
+		if sliceToRecover == '_C':
+			if self.isSlice == '_A':
+				recoverFile.write(self.getSliceSection(1))
+				recoverFile.write(other.getSliceSection(2))
+			else:
+				recoverFile.write(other.getSliceSection(1))
+				recoverFile.write(self.getSliceSection(2))
+
+		recoverFile.close()
+		recoverHeader =  fileHeader(STORE_PATH+self.name, sliceToRecover)
+		return recoverHeader
+
+	def recoverFile(self,other):
+		recoverFile = open(STORE_PATH+self.name,'wb')
+
+		#Get section 1
+		if self.isSlice == '_A' or self.isSlice == '_C':
+			recoverFile.write(self.getSliceSection(1))
+		else:
+			recoverFile.write(other.getSliceSection(1))
+
+		#Get section 2
+		if self.isSlice == '_A' or self.isSlice == '_B':
+			if self.isSlice == '_A':
+				recoverFile.write(self.getSliceSection(2))
+			else:
+				recoverFile.write(self.getSliceSection(1))
+
+		else:
+			if other.isSlice == '_A':
+				recoverFile.write(other.getSliceSection(2))
+			else:
+				recoverFile.write(other.getSliceSection(1))
+
+		#Get section 3
+		if self.isSlice == '_B' or self.isSlice == '_C':
+			recoverFile.write(self.getSliceSection(2))
+		else:
+			recoverFile.write(other.getSliceSection(2))
+
+		recoverFile.close()
+		recoverHeader = fileHeader(STORE_PATH+self.name)
+		return recoverHeader
+
+	def getSliceSection(self, half):
+		fid = open(self.getFullPath(),'rb')
+		if half == 1:
+			buf = fid.read(int(math.ceil(self.size/2)))
+		else:
+			fid.seek(int(math.ceil(self.size/2)))
+			buf = fid.read(self.size - int(math.ceil(self.size/2)))
+
+		fid.close()
+		return buf
+
+#Storage location for a file
+#Name = fileHeader object
+#locations = list of strings, representing IP addresses
 class fileLocation:
-	def __init__(self,name,locations = []):
-		self.name = name
+	def __init__(self, header, locations = []):
+		self.header = header
 		self.locations = [locations]
 
 #Entry for a guest list
@@ -89,9 +234,14 @@ class guest:
 		self.randID = -1
 
 		self.threads = {}
-		self.socketLock = threading.Semaphore()
+		self.socketLock = threading.Lock()
 
 		self.redist = False
+
+		if not os.access(STORE_PATH,os.F_OK):
+			os.mkdir(STORE_PATH)
+
+		self.createThread('splitFiles',[])
 
 		if (neighbor is not None):
 			print 'Sending knock to ' + neighbor
@@ -114,10 +264,7 @@ class guest:
 					self.randID = randint(0,sys.maxint)
 
 				myHash = hashEntry(self.addr, self.randID, 0)
-
-				threadName = 'addMe'
-				self.threads[threadName] = [threading.Thread(None,self.addMe,threadName,[myHash]),[]]
-				self.threads[threadName][0].start()
+				self.createThread('addMe', [myHash])
 
 		else:
 			self.randID = randint(0,sys.maxint)
@@ -128,148 +275,208 @@ class guest:
 	def run(self):
 		while(1):
 			#If there's a message, get it
-			sockStatus = select([self.sock],[],[],0)
-			if(sockStatus[0]):
+			sockStatus = select([sys.stdin,self.sock],[],[],0)
+			if sys.stdin in sockStatus[0]:
+				self.handleInterupt()
+
+			elif self.sock in sockStatus[0]:
 				with self.socketLock:
 					pickMessage = self.sock.recvfrom(BUF_SIZE)
 
 				message = loads(pickMessage[0])
-				#print message
+
+				sender = pickMessage[1]
+				command = message[0]
+				args = message[1]
 
 				# update the last reply time for sender
-				self.updateLastReply(pickMessage[1][0])
+				self.updateLastReply(sender[0])
 
 				#Handle messages by type
 
 				#Knock sends back the guest list
-				if (message[0] == 'knock'):
-					print 'knock from ' + pickMessage[1][0]
+				if command == 'knock':
+					print 'knock from ' + sender[0]
 					reply = ('guestList',self.guestList)
 					pickReply = dumps(reply)
 
 					with self.socketLock:
-						self.sock.sendto(pickReply,pickMessage[1])
+						self.sock.sendto(pickReply,sender)
 
 				#addMe initiates an add request
-				if (message[0] == 'addMe'):
-					print 'addMe from '+ pickMessage[1][0]
-					threadName = 'addGuest_'+pickMessage[1][0]
+				if command == 'addMe':
+					print 'addMe from '+ sender[0]
 					
-					self.threads[threadName] = [threading.Thread(None,self.addGuest,threadName,(message,pickMessage[1][0])),[]]
-					self.threads[threadName][0].start()
-
+					self.createThread('addGuest', [message,sender[0]])
 
 				#confirmAdd approves people to be added
-				if (message[0] == 'confirmAdd'):
+				if command == 'confirmAdd':
 					if 'addMe' in self.threads:
 						self.threads['addMe'][1].append(pickMessage)
 						continue
 
-					threadName = 'addGuest_'+message[1][0]
+					threadName = 'addGuest_'+args[0]
 					if (threadName in self.threads):
 						self.threads[threadName][1].append(pickMessage)
 					else:
-						if (message[1][1] == 'yes'):
+						if (args[1] == 'yes'):
 							with self.socketLock:
-								message[1][1] = 'no'
-								self.sock.sendto(dumps(message),pickMessage[1])
+								args[1] = 'no'
+								self.sock.sendto(dumps(message),sender)
 
 				#hello-hello pings w/ timeout
-				if (message[0] == 'hello'):
-					threadName = 'hello_'+message[1]
-
+				if command == 'hello':
+					threadName = 'hello_'+args
 					if threadName in self.threads:
 						self.threads[threadName][1].append(message)
-					elif message[1] == self.addr:
+					elif args == self.addr:
 						with self.socketLock:
-							self.sock.sendto(pickMessage[0],pickMessage[1])
+							self.sock.sendto(pickMessage[0],sender)
 
 				#Have everyone check if someone is still alive
-				if (message[0] == 'call'):
-					threadName = 'call_'+message[1]
+				if command == 'call':
+					threadName = 'call_'+args
 					if threadName in self.threads:
 						self.threads[threadName][1].append(pickMessage)
 
 					elif ('hello_'+message[1] not in self.threads):
-						threadName = 'hello_'+message[1]
-						self.threads[threadName] = [threading.Thread(None,self.hello,threadName,[message[1]]),[]]
-						self.threads[threadName][0].start()
+						self.createThread('hello',[args])
 
 				#Add a fileHeader to the file list
-				if (message[0] == 'holdMyPint'):
-					self.fileList.append(message[1])
-					self.watchMyPint(message[1])
+				if command == 'holdMyPint':
+					threadName = 'takePint_'+args[0].name+'_'+args[1][0]
+					if threadName not in self.threads:
+						self.createThread('takePint',args)
+					else:
+						pass #FIXME Not sure if needed
 
-				
-				if message[0] == 'watchMyPint':
-					entry = [x for x in self.fileLocations if x.name == message[1].name]
-					if entry:
-						entry[0].locations.append(pickMessage[1][0])
-					else:
-						self.fileLocations.append(fileLocation(message[1].name, pickMessage[1][0]))
-				if message[0] == 'wheresMyPint':
-					entry = [x for x in self.fileList if x.name == message[1]]
-					entry.append([x for x in self.fileLocations if x.name == message[1]])
-					if entry:
-						reply = ('heresYourPint', [message[1],entry[0]])
-					else:
-						reply = ('heresYourPint', [message[1],self.hashList.search(message[1])])
+				#Add a file name and slice to the file location list
+				if command == 'watchMyPint':
+					fileHeader = args
+					
+					entry = [x for x in self.fileLocations if x.header.name == fileHeader.name and x.header.isSlice == fileHeader.isSlice]
+					
+					for i in entry:
+						self.fileLocations.remove(i)
+						
+					self.fileLocations.append(fileLocation(fileHeader, sender))
+
+				if command == 'wheresMyPint':
+					locations = self.getFileLocations(args)
+					#headers = [x for x in self.fileList if x.name == args]
+					reply = ('heresYourPint',(args, locations))
+
 					pickReply = dumps(reply)
 					with self.socketLock:
 						self.sock.sendto(pickReply,pickMessage[1])
-				if message[0] == 'heresYourPint':
-					threadName = 'wheresMyPint_' + message[1][0]
+
+				if command == 'passMyPint':
+					threadName = 'passPint_'+args[0].name+args[0].isSlice+'_'+args[1][0]
+					if threadName not in self.threads:
+						self.createThread('passPint', args)
+
+				if command == 'heresYourPint':
+					threadName = 'wheresMyPint_' + args[0]
 					if threadName in self.threads:
-						self.threads[threadName][1] = message
+						self.threads[threadName][1].append(args[1])
 			else:
 
 				tarList = [x for x in self.guestList if (time()-x.time > 8 or time() - x.time < -1) and x.status == 0] #FIXME
 				for tar in tarList:
 					if (tar.addr == self.addr):
-						print 'File Status:'
-						print 'Now Holding:'
-						for i in self.fileList:
-							print i.name
-						print 'Now Watching:'
-						for i in self.fileLocations:
-							print i.name + ' at '+ str(i.locations)
 						tar.time = time()
 					else:
 						threadName = 'hello_'+tar.addr
 						if (threadName not in self.threads):
-							self.threads[threadName] = [threading.Thread(None,self.hello,threadName,[tar.addr]),[]]
-							self.threads[threadName][0].start()
+							self.createThread('hello',[tar.addr])
 
 				callList = [x for x in self.guestList if x.status == 1]
 				for call in callList:
 					threadName = 'call_'+call.addr
 					if (threadName not in self.threads):
-						self.threads[threadName] = [threading.Thread(None,self.call,threadName,[call.addr]),[]]
-						self.threads[threadName][0].start()
+						self.createThread('call',[call.addr])
 
 				if self.redist:
-					threadName = 'redist'
-					self.threads[threadName] = [threading.Thread(None,self.distributeFiles,threadName),[]]
-					self.threads[threadName][0].start()
+					self.createThread('redist',[])
 					self.redist = False
 				
 
-	def holdMyPint(self, f, addr):
-		message = ('holdMyPint',f)
+	def holdMyPint(self, header, addr):
+		threadName = threading.current_thread().getName()
+
+		print 'Transfering '+header.name+header.isSlice+' to '+addr
+
+		if header in self.fileList:
+			self.fileList.remove(header)
+
+		bindSock = socket()
+		bindSock.bind((self.addr,0))
+		
+		transferAddr = bindSock.getsockname()
+
+		fid = open(header.path + header.name + header.isSlice,'rb')
+
+		message = ('holdMyPint',(header,transferAddr))
 		pickMessage = dumps(message)
 		with self.socketLock:
 			self.sock.sendto(pickMessage,(addr,PORT))
+
+		bindSock.listen(1)
+		conn = bindSock.accept()
+		transferSock = conn[0]		
+
+
+		buf = fid.read(header.size)
+
+		transferSock.send(buf)
+
+		bindSock.close()
+		transferSock.close()
+		fid.close()
+
+		print 'Transfer of '+header.name+header.isSlice+' complete.'
+
+		self.threads.pop(threadName, None)
+
+
+	def takePint(self, fheader, addr):
+		threadName = threading.current_thread().getName()
+
+		print 'Taking ' +fheader.name+fheader.isSlice+' from '+addr[0]
+
+		fheader.path = STORE_PATH
+
+		fid = open(fheader.path + fheader.name + fheader.isSlice,'wb')
+
+		transferSock = socket()
+		transferSock.connect(addr)
+
+		dataRecieved = 0
+		while dataRecieved < fheader.size:
+			buf = transferSock.recv(BUF_SIZE)
+			fid.write(buf)
+			dataRecieved += len(buf)
+
+		fid.close()
+		transferSock.close()
+		
+		self.fileList.append(fheader)
+		self.watchMyPint(fheader)
+
+		print fheader.name+fheader.isSlice+' successfully stored.'
+
+		self.threads.pop(threadName, None)
 
 
 	def watchMyPint(self, f):
 		target = self.hashList.search(f.hashVal)
 		f.lastWatch = target.addr
 		if target.addr == self.addr:
-			entry = [x for x in self.fileLocations if x.name == f.name]
+			entry = [x for x in self.fileLocations if x.header.name == f.name and x.header.isSlice == f.isSlice]
 			if entry:
-				entry[0].locations.append(self.addr)
+				entry[0].locations = [(self.addr,PORT)]
 			else:
-				self.fileLocations.append(fileLocation(f.name, self.addr))
+				self.fileLocations.append(fileLocation(f, self.addr))
 			target = self.hashList.search(self.randID-1)
 
 		message = ('watchMyPint', f)
@@ -282,6 +489,12 @@ class guest:
 		hashVal = sum([ord(x) for x in name])
 
 		target = self.hashList.search(hashVal)
+
+		bindSock = socket()
+		bindSock.bind((self.addr,0))
+		bindAddr = bindSock.getsockname()
+
+		bindSock.listen(5)
 
 		locations = []
 		pints = []
@@ -297,21 +510,54 @@ class guest:
 			if q:
 				reply = q.pop()
 
-				if type(reply[1][1]) == fileHeader:
-					pints.append(reply[1][1])
-				else:
-					locations.extend(reply[1][1])
-			for i in locations:
-				with self.socketLock:
-					self.sock.sendto(pickMessage,(i,PORT))
-			locations = []
+				for i in reply:
+					print i.locations
+					if i.locations[0][0] == self.addr:
+						pints.append(i)
+					elif i.locations[0][0] in [x.addr for x in self.guestList]:
+						message = ('passMyPint',(i.header,bindAddr))
+						pickMessage = dumps(message)
+
+						fid = open(STORE_PATH+i.header.name+i.header.isSlice,'wb')
+
+						with self.socketLock:
+							self.sock.sendto(pickMessage,i.locations[0])
+
+						conn = bindSock.accept()
+
+						print 'connect'
+
+						dataRecieved = 0
+						while dataRecieved < i.header.size:
+							buf = conn[0].recv(BUF_SIZE)
+							fid.write(buf)
+							dataRecieved += len(buf)
+
+						i.header.path = STORE_PATH
+
+						pints.append(i)
+
+		return pints
+
+	def passPint(self, header, addr):
+		threadName = threading.current_thread().getName()
 		
-		self.fileList.append(fileHeader(name))
+		fid = open(header.path+header.name+header.isSlice,'rb')
+
+		sock = socket()
+		sock.connect(addr)
+
+		buf = fid.read(header.size)
+		
+		sock.send(buf)
+
+		fid.close()
+		sock.close()
 
 		self.threads.pop(threadName,None)
 
 
-	def addMe(self,profile):
+	def addMe(self, profile):
 		threadName = threading.current_thread().getName()
 		approval = []
 		message = ('addMe',profile)
@@ -422,7 +668,7 @@ class guest:
 		tarEntry = [x for x in self.guestList if x.addr == target]
 		if not tarEntry:
 			print 'HORROR!'
-			pass #FIXME
+			return #FIXME
 		tarEntry = tarEntry[0]
 		
 
@@ -469,51 +715,180 @@ class guest:
 			tar.status = 0
 		if not tarList:
 			pass
-			#FIXME
-			#print 'horrible error'
 
 	def distributeFiles(self):
 		threadName = threading.current_thread().getName()
-		completeFiles = [x for x in self.fileList if not x.isSlice]
+
 		partialFiles = [x for x in self.fileList if x.isSlice]
 		brokenFiles = []
 		guestAddr = [x.addr for x in self.guestList]
 		for x in self.fileLocations:
 			for y in x.locations:
-				if y not in guestAddr:
+				if y[0] not in guestAddr:
 					brokenFiles.append(x)
 					break
+
+		while 'splitFiles' in self.threads:
+			pass
+
+		while partialFiles:
+			f = partialFiles.pop(0)
+
+			otherFragments = [x for x in partialFiles if x.name == f.name and x.isSlice != f.isSlice and x.isSlice != '']
+
+			if len(otherFragments) == 2:
+				neighbors = [x.addr for x in self.guestList if x.addr != self.addr]
+
+				addrA = choice(neighbors)
+				neighbors.remove(addrA)
+				addrB = choice(neighbors)
+
+				self.watchMyPint(f)
+
+				self.createThread('holdMyPint',[otherFragments[0],addrA])
+				self.createThread('holdMyPint',[otherFragments[1],addrB])
+
+				partialFiles.remove(otherFragments[0])
+				partialFiles.remove(otherFragments[1])
 		
-		for f in completeFiles:
-			fSplit = f.split()
-			self.fileList.remove(f)
-			self.fileList.append(fSplit[0])
-
-			neighbors = [x.addr for x in self.guestList if x.addr != self.addr]
-
-			addrA = choice(neighbors)
-			neighbors.remove(addrA)
-			addrB = choice(neighbors)
-
-			self.watchMyPint(fSplit[0])
-			self.holdMyPint(fSplit[1],addrA)
-			self.holdMyPint(fSplit[2],addrB)
-
-		for f in partialFiles:
 			if f.lastWatch != self.hashList.search(f.hashVal):
 				self.watchMyPint(f)
 
 		for f in brokenFiles:
-			print f.name + ' is broken. Attempting recovery'
-			threadName = 'wheresMyPint_'+f.name
-			self.threads[threadName] = [threading.Thread(None,self.wheresMyPint,threadName,[f.name]),[]]
-			self.threads[threadName][0].run()
-			self.threads[threadName][0].join()
+			if self.hashList.search(f.header.hashVal).addr == self.addr:
+				print f.header.name + ' is broken. Attempting recovery'
+				self.createThread('recoverPint',[f.header.name])
 
-		print 'File distributuion complete.'
-		print 'Now holding: '+str([x.name for x in self.fileList])
-		print 'Now watching: ' +str([x.name for x in self.fileLocations])
 		self.threads.pop(threadName,None)
+
+	def recoverPint(self, name):
+		threadName = threading.current_thread().getName()
+
+		pints = self.wheresMyPint(name)
+
+		recoveredSlice = pints[0].header.recoverSlice(pints[1].header)
+
+		pintLocations = [y.locations[0][0] for y in pints]
+		neighbors = [x.addr for x in self.guestList if x.addr not in pintLocations]
+		newAddr = choice(neighbors)
+
+		if newAddr == self.addr:
+			self.fileList.append(recoveredSlice)
+			self.watchMyPint(recoveredSlice)
+		else:
+			self.createThread('holdMyPint',[recoveredSlice,newAddr])
+		
+		self.threads.pop(threadName,None)
+
+	def getPint(self, name):
+		threadName = threading.current_thread().getName()
+
+		pints = self.wheresMyPint(name)
+
+		completeFile = pints[0].header.recoverFile(pints[1].header)
+
+		fid = open(completeFile.path+completeFile.name,'rb')
+
+		buf = fid.read(completeFile.size)
+		print buf
+
+		self.threads.pop(threadName,None)
+
+	def splitFiles(self):
+		threadName = threading.current_thread().getName()
+		for i in self.fileList:
+			fsplit = i.split()
+			self.fileList.extend(fsplit)
+
+		self.threads.pop(threadName,None)
+
+	def getFileLocations(self, name):
+		return [x for x in self.fileLocations if x.header.name == name]
+
+	def createThread(self, function, args):
+		threadName = ''
+		threadFunc = None
+
+		if function == 'splitFiles':
+			threadName = 'splitFiles'
+			threadFunc = self.splitFiles
+		
+		elif function == 'holdMyPint':
+			threadName = 'holdMyPint_'+args[0].name+'_'+args[1]
+			threadFunc = self.holdMyPint
+
+		elif function == 'wheresMyPint':
+			threadName = 'wheresMyPint_'+args[0]
+			threadFunc = self.wheresMyPint
+
+		elif function == 'passPint':
+			threadName = 'passPint_'+args[0].name+args[0].isSlice+'_'+args[1][0]
+			threadFunc = self.passPint
+
+		elif function == 'takePint':
+			threadName = 'takePint_'+args[0].name+'_'+args[1][0]
+			threadFunc = self.takePint
+
+		elif function == 'hello':
+			threadName = 'hello_'+args[0]
+			threadFunc = self.hello
+
+		elif function == 'call':
+			threadName = 'call_'+args[0]
+			threadFunc = self.call
+	
+		elif function == 'addGuest':
+			threadName = 'addGuest_'+args[1]
+			threadFunc = self.addGuest
+
+		elif function == 'addMe':
+			threadName = 'addMe'
+			threadFunc = self.addMe
+
+		elif function == 'redist':
+			threadName = 'redist'
+			threadFunc = self.distributeFiles
+
+		elif function == 'recoverPint':
+			threadName = 'wheresMyPint_'+args[0]
+			threadFunc = self.recoverPint
+
+		elif function == 'getPint':
+			threadName = threadName = 'wheresMyPint_'+args[0]
+			threadFunc = self.getPint
+
+		else:
+			return threadName
+
+		self.threads[threadName] = [threading.Thread(None, threadFunc, threadName, args),[]]
+		self.threads[threadName][0].start()
+		return threadName
+
+	def handleInterupt(self):
+		inString = sys.stdin.readline().strip()
+
+		if inString == 'h' or inString == 'help':
+			print 'Commands:'
+			print 'ls'
+			print 'get [name]'
+
+		elif inString == 'ls':
+			print ''
+			print '------------'
+			print 'File Status:'
+			print '------------'
+			print ''
+			print 'Now Holding:'
+			for i in self.fileList:
+				print i.name+i.isSlice
+			print ''
+			print 'Now Watching:'
+			for i in self.fileLocations:
+				print i.header.name + i.header.isSlice + ' at ' + str(i.locations)
+			print ''
+
+		elif inString.split(' ')[0] == 'get':
+			self.createThread('getPint',[inString.split(' ')[1]])
 
 def main(argv = None):
 	if (argv is None):

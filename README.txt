@@ -59,7 +59,7 @@ ssh-config
 SSH configuration for each sliver in the slice.  You can SSH to any
 sliver using the label following the 'Host' definition, e.g.,:
 
-$ ssh -F ssh-config -i id_rsa slice319.pcvm3-1.instageni.metrodatacenter.com
+$ ssh -F ssh-config -i id_rsa slice352.pcvm3-1.instageni.metrodatacenter.com
 
 Other commands like scp work in the same way, but it is necessary to
 specify the -F and -i options as above.
