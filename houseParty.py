@@ -476,7 +476,7 @@ class guest:
 			if entry:
 				entry[0].locations = [(self.addr,PORT)]
 			else:
-				self.fileLocations.append(fileLocation(f, self.addr))
+				self.fileLocations.append(fileLocation(f, (self.addr,PORT)))
 			target = self.hashList.search(self.randID-1)
 
 		message = ('watchMyPint', f)
@@ -511,7 +511,6 @@ class guest:
 				reply = q.pop()
 
 				for i in reply:
-					print i.locations
 					if i.locations[0][0] == self.addr:
 						pints.append(i)
 					elif i.locations[0][0] in [x.addr for x in self.guestList]:
@@ -524,8 +523,6 @@ class guest:
 							self.sock.sendto(pickMessage,i.locations[0])
 
 						conn = bindSock.accept()
-
-						print 'connect'
 
 						dataRecieved = 0
 						while dataRecieved < i.header.size:

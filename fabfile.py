@@ -48,6 +48,10 @@ def demo2A():
 def demo1B():
         run('python houseParty.py 10.0.1.26')
 
+@hosts("slice352.pcvm3-1.instageni.metrodatacenter.com")
+def demo2B():
+	run('python houseParty.py 10.0.1.26 dark_matter.mp3')
+
 @hosts("slice352.pcvm2-2.instageni.rnoc.gatech.edu")
 def demo1C():
         run('python houseParty.py 10.2.1.27')
@@ -56,17 +60,16 @@ def demo1C():
 def demo1D():
         run('python houseParty.py 10.0.1.26')
 
+@hosts("slice352.pcvm5-7.lan.sdn.uky.edu")
+def demo2D():
+        run('python houseParty.py 10.0.1.26 blue_buck.rtf')
+
 def version():
-        run('python3 -V')
+        run('python -V')
 
 @parallel
 def update():
         put('houseParty.py','houseParty.py')
-
-@parallel
-def prepDemoFiles():
-	prepNodeA()
-	prepNodeB()
 
 @hosts("slice352.pcvm3-1.geni.case.edu")
 def prepNodeA():
@@ -75,8 +78,12 @@ def prepNodeA():
 
 @hosts("slice352.pcvm3-1.instageni.metrodatacenter.com")
 def prepNodeB():
-	pass
+	put('dark_matter.mp3','dark_matter.mp3')
+
+@hosts("slice352.pcvm5-7.lan.sdn.uky.edu")
+def prepNodeD():
+	put('blue_buck.rtf','blue_buck.rtf')
 
 @parallel
 def clean():
-        run('rm *')
+        run('rm -r *')

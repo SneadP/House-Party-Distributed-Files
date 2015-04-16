@@ -1,5 +1,5 @@
 # House-Party-Distributed-Files
-Let's have a party! Csc 462/562 project 1
+Let's have a party! Csc 462/562 project 1 EDIT: See below for project 2!
 
 Description:
 This will be a simple RAID-like file system implemented over a distributed set of nodes, and written in python.
@@ -36,4 +36,45 @@ Data distribution and retrival, on the other hand, requires no consensus at all.
 
 The big issue that I've avoided, and the reason only file headers are passed instead of real files, is the infinite number of failure modes involved in issues and interuption during a file transmission. I hope to tackle these properly for project 2.
 
+PROJECT 2 UPDATE!
+-----------------
+The general outline of the protocol is the same as in project 1. Below are details of what has changed.
 
+Big changes:
+	-Transfers and recovers full files to and from peers
+	-Added a command line ui to view peer contents and request file retrieval
+	-Corrected numerous issues with file recovery behavior in project 1
+	-Streamlined concurrent processes to allow the system to remain consistant while transfering multiple files
+
+System structure:
+	-Each peer creates a guest object
+	-Each guest object creates a main thread that acts as the message handler, and accepts messages from other peers
+	-Each guest object maintains a dictionary, threads, which contains key-value pairs of the form threadName : [threadObject,messageQueue]
+	-When the main thread receives a message, it is either handled directly (in cases where handling is simple and non-blocking), or
+	the main thread creates a worker to handle the message. If such a worker already exists, main adds the message to the worker's
+	message queue instead
+	-Worker threads are responsible for removing themselves from the dictionary before exiting
+	-Messaging is done in UDP
+
+File Transfering:
+	-File transfer is donw with TCP sockets
+	-A peer may send the signal 'holdMyPint' to another, along with the address and port of a new TCP socket that is listening for 
+	connections. The thread that sends the file must create this socket.
+	-The peer that recieves the signal creates a new thread, connects to the provided address, and writes it into the file specified
+	by the header information passed
+	-The receiving peer then reports its acceptance of the file to the network using watchMyPint
+
+File Recovery:
+	-Nodes in charge of watching a file can determine when a node goes down if a file has been broken by that failure
+	-When a file is detected to have broken, the watching nodes sends requests download the remaining file fragments
+	-Once two of three fragments are recovered, the full file can be reproduced
+	-The missing fragment is reproduced from the two others
+	-The restored fragment is then passed to a new node in the network
+
+Error Handling:
+	-Nodes are designed to expect their peers to fail, therefore node failure is handled by design of the system
+	-When nodes die, recovery happens, and the system goes on
+
+Test Cases:
+	-Put some files in, start a party, then start killing nodes! Any nodes will do.
+	-See the demo video for an example of running and testing
